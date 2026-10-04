@@ -1,14 +1,15 @@
 // Engine_Drifting.sc
 //
 // The SuperCollider side of the "drifting" norns script.
-// One persistent synth holds all 21 sine oscillators. Three control
-// values shape it live:
+// One persistent synth holds all 21 oscillators (sines by default).
+// These control values shape it live:
 //   base    - the fundamental frequency of oscillator 1 (Hz)
 //   spacing - how far apart the partials are (0 = all on the fundamental,
 //             1 = the natural harmonic series, up to 4 = quadruple spacing)
 //   dist    - amplitude tilt across the 21 partials (-1 favours the low /
 //             fundamental end, 0 = equal, +1 favours the highest partial)
 //   amp     - overall master level
+//   wave    - oscillator waveform: 0 = sine, 1 = saw, 2 = pulse
 // A single gate fades the whole drone in and out (K3 on the norns).
 
 Engine_Drifting : CroneEngine {
@@ -24,12 +25,12 @@ Engine_Drifting : CroneEngine {
 
 		SynthDef("drifting", {
 			arg base = 110, spacing = 1.0, dist = 0.0, amp = 0.3,
-			    drift = 0.3, gate = 0, out = 0;
+			    drift = 0.3, wave = 0, gate = 0, out = 0;
 
 			var n = 21;           // number of oscillators
 			var kMax = 8;         // steepness of the amplitude tilt at the extremes
 			var maxDrift = 0.02;  // max frequency wander at drift = 1 (±2%)
-			var lagBase, lagSpace, slope, driftDepth;
+			var lagBase, lagSpace, slope, driftDepth, lagWave;
 			var freqs, gates, weights, wsum, amps, sig, env;
 
 			// smooth encoder moves so changes don't zipper / click.
@@ -37,6 +38,8 @@ Engine_Drifting : CroneEngine {
 			lagSpace = Lag.kr(spacing, 0.1);
 			slope    = Lag.kr(dist, 0.1) * kMax;
 			driftDepth = Lag.kr(drift, 0.1) * maxDrift;
+			// lagged so switching waveform is a short crossfade, not a click.
+			lagWave  = Lag.kr(wave, 0.2);
 
 			// oscillator i (0..20) is harmonic (i+1):
 			//   freq = base * (1 + i * spacing)
@@ -63,9 +66,18 @@ Engine_Drifting : CroneEngine {
 			wsum = weights.sum.max(0.0001);
 			amps = weights / wsum;
 
-			// sum all 21 sines at their normalised amplitudes. each gets a
-			// random start phase (Rand) so they don't all spike together.
-			sig = Mix.fill(n, { |i| SinOsc.ar(freqs[i], Rand(0, 2pi)) * amps[i] });
+			// sum all 21 oscillators at their normalised amplitudes. SelectX
+			// builds all three waveforms and crossfades to the one chosen by
+			// `wave`. Saw and Pulse are band-limited, so they don't alias.
+			// each sine gets a random start phase (Rand) so they don't all
+			// spike together; Saw/Pulse have no phase input and rely on drift.
+			sig = Mix.fill(n, { |i|
+				SelectX.ar(lagWave, [
+					SinOsc.ar(freqs[i], Rand(0, 2pi)),
+					Saw.ar(freqs[i]),
+					Pulse.ar(freqs[i])
+				]) * amps[i]
+			});
 
 			// whole-drone fade. gate 1 = fade in, gate 0 = fade out.
 			// no doneAction: the synth lives for the engine's lifetime and
@@ -96,6 +108,7 @@ Engine_Drifting : CroneEngine {
 		this.addCommand("setDist",  "f", { arg msg; synth.set(\dist,    msg[1]); });
 		this.addCommand("setDrift", "f", { arg msg; synth.set(\drift,   msg[1]); });
 		this.addCommand("setAmp",   "f", { arg msg; synth.set(\amp,     msg[1]); });
+		this.addCommand("setWave",  "i", { arg msg; synth.set(\wave,    msg[1]); });
 		this.addCommand("setGate",  "f", { arg msg; synth.set(\gate,    msg[1]); });
 	}
 
